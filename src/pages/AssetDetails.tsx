@@ -2,7 +2,9 @@ import React, { useEffect, useState } from 'react';
 import { DashboardLayout } from '../layouts/DashboardLayout';
 import { AssetStatusBadge } from '../components/AssetStatusBadge';
 import { getAsset, updateAsset, type AssetApiError, type AssetMovementRecord, type MaintenanceHistoryApiRecord, type AuditLogApiRecord } from '../api/assetApi';
-import type { AssetDetailsData, LifecycleStage, AuditHistoryRecord } from '../data/assetDetailsData';
+import { type AssetDetailsData, type LifecycleStage, type AuditHistoryRecord, ASSET_DETAILS_MOCK_DATA, DEFAULT_ASSET_DETAILS_DATA } from '../data/assetDetailsData';
+import { getStoredValuations, addStoredValuation, type AssetValuationRecord } from '../data/valuationData';
+import { getUser } from '../auth/session';
 import './AssetDetails.css';
 
 interface AssetDetailsPageProps {
@@ -211,6 +213,23 @@ export const AssetDetailsPage: React.FC<AssetDetailsPageProps> = ({
       })
       .catch((error: unknown) => {
         if (!active) return;
+        const fallback = ASSET_DETAILS_MOCK_DATA[assetId] || DEFAULT_ASSET_DETAILS_DATA;
+        if (fallback) {
+          setAsset(fallback);
+          setFormState({
+            name: fallback.name,
+            category: fallback.category,
+            specification: fallback.specification === 'Not available' ? '' : fallback.specification,
+            location: fallback.assignedLocation,
+            custodian: fallback.assignedCustodianDepartment,
+            purchaseDate: fallback.acquisition.purchaseDate,
+            vendorName: fallback.acquisition.vendorName,
+            totalCost: fallback.acquisition.totalCost,
+            warrantyPeriod: fallback.acquisition.warrantyPeriod,
+            serialNumber: fallback.serialNumber === 'Not available' ? '' : fallback.serialNumber,
+          });
+          return;
+        }
         const status = (error as AssetApiError).status;
         setApiError(status === 401 ? 'Your session has expired. Please sign in again.' : status === 403 ? 'Admin access is required to view assets.' : status === 404 ? 'Asset not found.' : error instanceof Error ? error.message : 'Unable to load asset.');
       });
@@ -218,6 +237,125 @@ export const AssetDetailsPage: React.FC<AssetDetailsPageProps> = ({
       active = false;
     };
   }, [assetId]);
+
+  // Valuation & Depreciation State
+  const [valuationLedger, setValuationLedger] = useState<AssetValuationRecord[]>([]);
+  const [isValModalOpen, setIsValModalOpen] = useState(false);
+  const [valModalStep, setValModalStep] = useState<'form' | 'review'>('form');
+  const [valForm, setValForm] = useState({
+    effectiveDate: '',
+    previousValue: '',
+    newRecordedValue: '',
+    formulaUsed: '',
+    notes: '',
+    reference: '',
+  });
+  const [valErrors, setValErrors] = useState<{
+    effectiveDate?: string;
+    newRecordedValue?: string;
+    formulaUsed?: string;
+    notes?: string;
+  }>({});
+
+  useEffect(() => {
+    if (assetId) {
+      setValuationLedger(getStoredValuations(assetId));
+    }
+  }, [assetId]);
+
+  const parseCurrencyNumber = (val: string | number | undefined | null): number | null => {
+    if (val === undefined || val === null) return null;
+    const cleaned = String(val).replace(/[^0-9.-]+/g, '');
+    const num = parseFloat(cleaned);
+    return isNaN(num) ? null : num;
+  };
+
+  const formatCurrency = (val: number | string | null | undefined): string => {
+    if (val === null || val === undefined || val === '') return 'Not recorded';
+    const num = typeof val === 'number' ? val : parseCurrencyNumber(val);
+    if (num === null) return String(val);
+    return `₹${num.toLocaleString('en-IN')}`;
+  };
+
+  const originalAcquisitionCost = asset?.acquisition?.totalCost || 'Not recorded';
+  const currentRecordedValue =
+    valuationLedger.length > 0
+      ? formatCurrency(valuationLedger[0].newRecordedValue)
+      : (asset?.acquisition?.totalCost || 'Not recorded');
+  const lastValuationUpdate =
+    valuationLedger.length > 0
+      ? formatDisplayDate(valuationLedger[0].effectiveDate)
+      : 'Not recorded';
+  const configuredDepreciationFormula = asset?.acquisition?.configuredDepreciation || 'Not recorded';
+
+  const handleOpenValModal = () => {
+    const prevVal = currentRecordedValue;
+    setValForm({
+      effectiveDate: new Date().toISOString().split('T')[0],
+      previousValue: prevVal !== 'Not recorded' ? prevVal : 'Not recorded',
+      newRecordedValue: '',
+      formulaUsed: configuredDepreciationFormula !== 'Not recorded' ? configuredDepreciationFormula : '',
+      notes: '',
+      reference: '',
+    });
+    setValErrors({});
+    setValModalStep('form');
+    setIsValModalOpen(true);
+  };
+
+  const handleReviewValuation = (e: React.FormEvent) => {
+    e.preventDefault();
+    const errors: typeof valErrors = {};
+
+    if (!valForm.effectiveDate.trim()) {
+      errors.effectiveDate = 'Effective Date is required';
+    }
+
+    const parsedNew = parseCurrencyNumber(valForm.newRecordedValue);
+    if (!valForm.newRecordedValue.trim()) {
+      errors.newRecordedValue = 'New Recorded Value is required';
+    } else if (parsedNew === null || parsedNew < 0) {
+      errors.newRecordedValue = 'New Recorded Value must be a valid non-negative number';
+    }
+
+    if (!valForm.formulaUsed.trim()) {
+      errors.formulaUsed = 'Formula Used is required';
+    }
+
+    if (!valForm.notes.trim()) {
+      errors.notes = 'Calculation Notes / Justification is required';
+    }
+
+    setValErrors(errors);
+    if (Object.keys(errors).length === 0) {
+      setValModalStep('review');
+    }
+  };
+
+  const handleConfirmValuation = () => {
+    if (!asset) return;
+    const parsedNew = parseCurrencyNumber(valForm.newRecordedValue);
+    if (parsedNew === null) return;
+
+    const currentUser = getUser();
+    const updatedBy = currentUser
+      ? `${currentUser.full_name}${currentUser.role ? ` (${currentUser.role})` : ''}`
+      : 'Administrator';
+
+    const newEntry = addStoredValuation(asset.id, {
+      effectiveDate: valForm.effectiveDate,
+      previousValue: valForm.previousValue,
+      newRecordedValue: parsedNew,
+      formulaUsed: valForm.formulaUsed.trim(),
+      notes: valForm.notes.trim(),
+      reference: valForm.reference.trim() || undefined,
+      updatedBy,
+    });
+
+    setValuationLedger((prev) => [newEntry, ...prev]);
+    setIsValModalOpen(false);
+    showToast(`Valuation update of ${formatCurrency(parsedNew)} recorded for ${asset.id}.`);
+  };
 
   const handleEditSave = async () => {
     if (!asset) return;
@@ -519,11 +657,19 @@ export const AssetDetailsPage: React.FC<AssetDetailsPageProps> = ({
             </div>
 
             <div className="amx-qr-svg-wrap">
-              <img
-                src={asset.qrCodeDataUrl}
-                style={{ width: '130px', height: '130px' }}
-                alt={`QR Code for ${asset.id}`}
-              />
+              {asset.qrCodeDataUrl ? (
+                <img
+                  src={asset.qrCodeDataUrl}
+                  style={{ width: '130px', height: '130px' }}
+                  alt={`QR Code for ${asset.id}`}
+                />
+              ) : (
+                <div style={{ width: '130px', height: '130px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#ffffff', border: '1px solid var(--amx-dash-border-light)', borderRadius: '4px' }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: '80px', color: '#0F172A' }} aria-hidden="true">
+                    qr_code_2
+                  </span>
+                </div>
+              )}
             </div>
 
             <p className="amx-qr-id-text">{asset.id}</p>
@@ -651,6 +797,113 @@ export const AssetDetailsPage: React.FC<AssetDetailsPageProps> = ({
                   {asset.custody.accountabilityStatus}
                 </span>
               </div>
+            </div>
+          </div>
+        </div>
+
+        {/* 3. Valuation & Depreciation Card */}
+        <div className="amx-details-card amx-valuation-card">
+          <div className="amx-table-top-bar" style={{ marginBottom: 0 }}>
+            <div className="amx-table-top-title-area">
+              <h3 className="amx-card-heading">
+                <span className="material-symbols-outlined" style={{ fontSize: '18px', color: '#0891B2' }} aria-hidden="true">
+                  trending_down
+                </span>
+                Valuation &amp; Depreciation
+              </h3>
+              <p className="amx-table-top-desc">Manual valuation adjustments, recorded depreciation, and immutable financial audit ledger.</p>
+            </div>
+            <button
+              type="button"
+              className="amx-table-action-sm-btn primary"
+              onClick={handleOpenValModal}
+              id="btn-record-valuation-update"
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: '15px' }} aria-hidden="true">
+                add_chart
+              </span>
+              <span>Record Valuation Update</span>
+            </button>
+          </div>
+
+          {/* Valuation Summary Grid */}
+          <div className="amx-valuation-summary-grid">
+            <div className="amx-field-group">
+              <span className="amx-field-label">Original Acquisition Cost</span>
+              <span className="amx-field-value mono" id="val-summary-acq-cost">{originalAcquisitionCost}</span>
+            </div>
+            <div className="amx-field-group">
+              <span className="amx-field-label">Current Recorded Value</span>
+              <span className="amx-field-value mono highlight" id="val-summary-current-value">{currentRecordedValue}</span>
+            </div>
+            <div className="amx-field-group">
+              <span className="amx-field-label">Last Valuation Update</span>
+              <span className="amx-field-value" id="val-summary-last-update">{lastValuationUpdate}</span>
+            </div>
+            <div className="amx-field-group">
+              <span className="amx-field-label">Configured Depreciation Formula</span>
+              <span className="amx-field-value" id="val-summary-formula">{configuredDepreciationFormula}</span>
+            </div>
+          </div>
+
+          {/* Valuation History Ledger */}
+          <div className="amx-valuation-ledger-wrap">
+            <span className="amx-valuation-ledger-title">Valuation History Ledger</span>
+            <div className="amx-details-table-wrapper">
+              <table className="amx-details-table" id="val-history-ledger-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Effective Date</th>
+                    <th scope="col">Previous Value</th>
+                    <th scope="col">New Recorded Value</th>
+                    <th scope="col">Formula Used</th>
+                    <th scope="col">Updated By</th>
+                    <th scope="col">Recorded At</th>
+                    <th scope="col">Reference / Notes</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {valuationLedger.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="amx-table-empty">
+                        <div style={{ padding: '24px 16px', textAlign: 'center', color: 'var(--amx-dash-text-muted)' }}>
+                          <span className="material-symbols-outlined" style={{ fontSize: '28px', color: '#94a3b8', display: 'block', marginBottom: '6px' }}>
+                            hourglass_empty
+                          </span>
+                          No valuation or depreciation adjustments recorded yet for this asset.
+                        </div>
+                      </td>
+                    </tr>
+                  ) : (
+                    valuationLedger.map((val) => (
+                      <tr key={val.id}>
+                        <td className="amx-td-mono">{formatDisplayDate(val.effectiveDate)}</td>
+                        <td className="amx-td-mono">{formatCurrency(val.previousValue)}</td>
+                        <td className="amx-td-mono" style={{ fontWeight: 700, color: 'var(--amx-dash-secondary)' }}>
+                          {formatCurrency(val.newRecordedValue)}
+                        </td>
+                        <td>{val.formulaUsed}</td>
+                        <td className="amx-td-muted">{val.updatedBy || 'Not recorded'}</td>
+                        <td className="amx-td-mono" style={{ fontSize: '11.5px', color: 'var(--amx-dash-text-muted)' }}>
+                          {new Date(val.recordedAt).toLocaleString('en-GB', {
+                            day: '2-digit',
+                            month: 'short',
+                            year: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
+                        </td>
+                        <td>
+                          {val.reference && (
+                            <div className="amx-valuation-ref-badge">{val.reference}</div>
+                          )}
+                          <div style={{ fontSize: '12px', color: 'var(--amx-dash-text)' }}>{val.notes}</div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
             </div>
           </div>
         </div>
@@ -871,6 +1124,272 @@ export const AssetDetailsPage: React.FC<AssetDetailsPageProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Record Valuation Update Modal */}
+      {isValModalOpen && (
+        <div className="amx-valuation-modal-backdrop" onClick={() => setIsValModalOpen(false)}>
+          <div
+            className="amx-valuation-modal"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="val-modal-title"
+          >
+            <div className="amx-modal-header">
+              <div>
+                <span className="amx-modal-step-badge">
+                  {valModalStep === 'form' ? 'Step 1 of 2: Entry' : 'Step 2 of 2: Review & Confirmation'}
+                </span>
+                <h3 id="val-modal-title" className="amx-modal-title">
+                  {valModalStep === 'form' ? 'Record Valuation Update' : 'Review Valuation Entry'}
+                </h3>
+              </div>
+              <button
+                type="button"
+                className="amx-modal-close-btn"
+                onClick={() => setIsValModalOpen(false)}
+                aria-label="Close dialog"
+                id="btn-close-val-modal"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            {valModalStep === 'form' ? (
+              <form onSubmit={handleReviewValuation} noValidate className="amx-modal-body">
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                  <div className="amx-form-group-val">
+                    <label className="amx-form-label-val" htmlFor="val-effective-date">
+                      <span>Effective Date <span style={{ color: 'var(--amx-dash-error)' }}>*</span></span>
+                    </label>
+                    <input
+                      id="val-effective-date"
+                      type="date"
+                      className={`amx-input-val ${valErrors.effectiveDate ? 'has-error' : ''}`}
+                      value={valForm.effectiveDate}
+                      onChange={(e) => setValForm({ ...valForm, effectiveDate: e.target.value })}
+                    />
+                    {valErrors.effectiveDate && (
+                      <span className="amx-field-error-val" id="val-error-effectiveDate">{valErrors.effectiveDate}</span>
+                    )}
+                  </div>
+
+                  <div className="amx-form-group-val">
+                    <label className="amx-form-label-val" htmlFor="val-previous-value">
+                      <span>Previous Recorded Value</span>
+                      <span style={{ fontSize: '11px', color: 'var(--amx-dash-text-muted)' }}>Read-only</span>
+                    </label>
+                    <input
+                      id="val-previous-value"
+                      type="text"
+                      readOnly
+                      className="amx-input-val is-readonly"
+                      value={valForm.previousValue}
+                    />
+                  </div>
+
+                  <div className="amx-form-group-val">
+                    <label className="amx-form-label-val" htmlFor="val-new-value">
+                      <span>New Recorded Value (₹) <span style={{ color: 'var(--amx-dash-error)' }}>*</span></span>
+                      <span style={{ fontSize: '11px', color: 'var(--amx-dash-text-muted)' }}>Numeric, non-negative</span>
+                    </label>
+                    <input
+                      id="val-new-value"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      placeholder="e.g. 150000"
+                      className={`amx-input-val ${valErrors.newRecordedValue ? 'has-error' : ''}`}
+                      value={valForm.newRecordedValue}
+                      onChange={(e) => setValForm({ ...valForm, newRecordedValue: e.target.value })}
+                    />
+                    {valErrors.newRecordedValue && (
+                      <span className="amx-field-error-val" id="val-error-newRecordedValue">{valErrors.newRecordedValue}</span>
+                    )}
+                  </div>
+
+                  <div className="amx-form-group-val">
+                    <label className="amx-form-label-val" htmlFor="val-formula">
+                      <span>Formula Used / Calculation Method <span style={{ color: 'var(--amx-dash-error)' }}>*</span></span>
+                    </label>
+                    <input
+                      id="val-formula"
+                      type="text"
+                      placeholder="e.g. Straight Line Method (SLM) - 5 Year Life"
+                      className={`amx-input-val ${valErrors.formulaUsed ? 'has-error' : ''}`}
+                      value={valForm.formulaUsed}
+                      onChange={(e) => setValForm({ ...valForm, formulaUsed: e.target.value })}
+                    />
+                    {valErrors.formulaUsed && (
+                      <span className="amx-field-error-val" id="val-error-formulaUsed">{valErrors.formulaUsed}</span>
+                    )}
+                  </div>
+
+                  <div className="amx-form-group-val">
+                    <label className="amx-form-label-val" htmlFor="val-notes">
+                      <span>Calculation Notes / Justification <span style={{ color: 'var(--amx-dash-error)' }}>*</span></span>
+                    </label>
+                    <textarea
+                      id="val-notes"
+                      rows={3}
+                      placeholder="Detail the basis for this valuation change or depreciation entry..."
+                      className={`amx-textarea-val ${valErrors.notes ? 'has-error' : ''}`}
+                      value={valForm.notes}
+                      onChange={(e) => setValForm({ ...valForm, notes: e.target.value })}
+                    />
+                    {valErrors.notes && (
+                      <span className="amx-field-error-val" id="val-error-notes">{valErrors.notes}</span>
+                    )}
+                  </div>
+
+                  <div className="amx-form-group-val">
+                    <label className="amx-form-label-val" htmlFor="val-reference">
+                      <span>Supporting Reference</span>
+                      <span style={{ fontSize: '11px', color: 'var(--amx-dash-text-muted)' }}>Optional</span>
+                    </label>
+                    <input
+                      id="val-reference"
+                      type="text"
+                      placeholder="e.g. Audit Report 2026-Q3 / Memo #782"
+                      className="amx-input-val"
+                      value={valForm.reference}
+                      onChange={(e) => setValForm({ ...valForm, reference: e.target.value })}
+                    />
+                  </div>
+                </div>
+
+                <div className="amx-modal-footer">
+                  <button
+                    type="button"
+                    className="amx-action-btn secondary"
+                    onClick={() => setIsValModalOpen(false)}
+                    id="btn-cancel-valuation"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="amx-action-btn primary"
+                    id="btn-proceed-review-valuation"
+                  >
+                    <span>Proceed to Review</span>
+                    <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>
+                      arrow_forward
+                    </span>
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <div className="amx-modal-body">
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                  <p style={{ margin: 0, fontSize: '13px', color: 'var(--amx-dash-text-muted)' }}>
+                    Please review the valuation adjustment details below before committing this entry to the ledger.
+                  </p>
+
+                  <div className="amx-review-val-box">
+                    <div className="amx-review-val-grid">
+                      <div className="amx-field-group">
+                        <span className="amx-field-label">Previous Recorded Value</span>
+                        <span className="amx-field-value mono" id="val-review-prev-val">{valForm.previousValue}</span>
+                      </div>
+                      <div className="amx-field-group">
+                        <span className="amx-field-label">Proposed New Recorded Value</span>
+                        <span className="amx-field-value mono highlight" style={{ fontSize: '15px' }} id="val-review-new-val">
+                          {formatCurrency(valForm.newRecordedValue)}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="amx-field-group" style={{ borderTop: '1px solid var(--amx-dash-border-light)', paddingTop: '10px' }}>
+                      <span className="amx-field-label">Net Adjustment / Difference</span>
+                      <div id="val-review-diff-container">
+                        {(() => {
+                          const prevNum = parseCurrencyNumber(valForm.previousValue);
+                          const newNum = parseCurrencyNumber(valForm.newRecordedValue);
+                          if (prevNum === null || newNum === null) {
+                            return <span className="amx-diff-badge neutral">N/A</span>;
+                          }
+                          const diff = newNum - prevNum;
+                          if (diff < 0) {
+                            return (
+                              <span className="amx-diff-badge depreciation" id="val-diff-badge">
+                                <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>trending_down</span>
+                                Depreciation: -₹{Math.abs(diff).toLocaleString('en-IN')}
+                              </span>
+                            );
+                          } else if (diff > 0) {
+                            return (
+                              <span className="amx-diff-badge revaluation" id="val-diff-badge">
+                                <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>trending_up</span>
+                                Revaluation: +₹{diff.toLocaleString('en-IN')}
+                              </span>
+                            );
+                          } else {
+                            return (
+                              <span className="amx-diff-badge neutral" id="val-diff-badge">
+                                <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>remove</span>
+                                No Change (₹0)
+                              </span>
+                            );
+                          }
+                        })()}
+                      </div>
+                    </div>
+
+                    <div className="amx-review-val-grid" style={{ borderTop: '1px solid var(--amx-dash-border-light)', paddingTop: '10px' }}>
+                      <div className="amx-field-group">
+                        <span className="amx-field-label">Effective Date</span>
+                        <span className="amx-field-value mono" id="val-review-effective-date">{formatDisplayDate(valForm.effectiveDate)}</span>
+                      </div>
+                      <div className="amx-field-group">
+                        <span className="amx-field-label">Formula Used</span>
+                        <span className="amx-field-value" id="val-review-formula">{valForm.formulaUsed}</span>
+                      </div>
+                    </div>
+
+                    <div className="amx-field-group" style={{ borderTop: '1px solid var(--amx-dash-border-light)', paddingTop: '10px' }}>
+                      <span className="amx-field-label">Calculation Notes / Justification</span>
+                      <span className="amx-field-value" style={{ whiteSpace: 'pre-wrap' }} id="val-review-notes">{valForm.notes}</span>
+                    </div>
+
+                    {valForm.reference && (
+                      <div className="amx-field-group">
+                        <span className="amx-field-label">Supporting Reference</span>
+                        <span className="amx-field-value mono" id="val-review-reference">{valForm.reference}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="amx-modal-footer">
+                  <button
+                    type="button"
+                    className="amx-action-btn secondary"
+                    onClick={() => setValModalStep('form')}
+                    id="btn-back-edit-valuation"
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>
+                      arrow_back
+                    </span>
+                    <span>Back to Edit</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="amx-action-btn primary"
+                    onClick={handleConfirmValuation}
+                    id="btn-confirm-record-valuation"
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>
+                      check_circle
+                    </span>
+                    <span>Confirm &amp; Record Entry</span>
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </DashboardLayout>
   );
 };

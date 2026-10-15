@@ -16,6 +16,14 @@ export interface RequestHistoryEntry {
   note?: string;
 }
 
+export interface RequestAttachment {
+  id: string;
+  name: string;
+  size: string;
+  type?: string;
+  uploadDate?: string;
+}
+
 export interface RequestItemData {
   id: string; // e.g. REQ-2026-0041
   requesterName: string;
@@ -31,6 +39,13 @@ export interface RequestItemData {
   justification: string;
   processingGuidelines?: string;
   history: RequestHistoryEntry[];
+  requestSource?: string;
+  dateReceived?: string;
+  externalReference?: string;
+  contactInfo?: string;
+  estimatedCost?: string;
+  procurementReference?: string;
+  attachments?: RequestAttachment[];
 }
 
 export const INITIAL_REQUESTS: RequestItemData[] = [
@@ -299,6 +314,67 @@ export function saveStoredRequests(items: RequestItemData[]): void {
   } catch (e) {
     console.error('Failed to save requests to localStorage', e);
   }
+}
+
+export function addStoredRequest(
+  request: Omit<RequestItemData, 'id' | 'status' | 'history'> &
+    Partial<Pick<RequestItemData, 'id' | 'status' | 'history'>>
+): RequestItemData {
+  const current = getStoredRequests();
+  let maxNum = 45;
+  current.forEach((r) => {
+    const m = r.id.match(/REQ-\d{4}-(\d+)/);
+    if (m) {
+      const n = parseInt(m[1], 10);
+      if (!isNaN(n) && n > maxNum) maxNum = n;
+    }
+  });
+  const nextId = request.id || `REQ-2026-${String(maxNum + 1).padStart(4, '0')}`;
+  const now = new Date();
+  const timestampStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+  const fullRecord: RequestItemData = {
+    id: nextId,
+    requesterName: request.requesterName,
+    requesterEmail: request.requesterEmail || (request.contactInfo && request.contactInfo.includes('@') ? request.contactInfo : 'external.requester@assetmx.local'),
+    department: request.department || 'External Department',
+    requestType: request.requestType,
+    requestedItem: request.requestedItem,
+    category: request.category || 'General',
+    quantity: request.quantity,
+    priority: request.priority,
+    requestDate: request.requestDate || now.toISOString().split('T')[0],
+    status: request.status || 'Pending',
+    justification: request.justification,
+    processingGuidelines:
+      request.processingGuidelines || 'External requisition recorded for administrative review.',
+    requestSource: 'External',
+    dateReceived: request.dateReceived,
+    externalReference: request.externalReference,
+    contactInfo: request.contactInfo,
+    estimatedCost: request.estimatedCost,
+    procurementReference: request.procurementReference,
+    attachments: request.attachments,
+    history:
+      request.history && request.history.length > 0
+        ? request.history
+        : [
+            {
+              id: `EVT-${Date.now().toString().slice(-4)}`,
+              timestamp: timestampStr,
+              stage: 'Pending',
+              action: 'External request recorded',
+              performedBy: 'Administrator',
+              note: request.externalReference
+                ? `External reference: ${request.externalReference}`
+                : 'Recorded via external request entry workflow.',
+            },
+          ],
+  };
+
+  const updated = [fullRecord, ...current];
+  saveStoredRequests(updated);
+  return fullRecord;
 }
 
 export const REQUEST_FILTER_OPTIONS = {

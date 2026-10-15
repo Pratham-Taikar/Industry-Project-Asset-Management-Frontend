@@ -12,6 +12,7 @@ import ConsumableDetailsPage from './pages/ConsumableDetails';
 import AddConsumablePage from './pages/AddConsumable';
 import RequestsPage from './pages/Requests';
 import RequestDetailsPage from './pages/RequestDetails';
+import AddExternalRequestPage from './pages/AddExternalRequest';
 import GatePassPage from './pages/GatePass';
 import GatePassDetailsPage from './pages/GatePassDetails';
 import GateVerificationPage from './pages/GateVerification';
@@ -38,6 +39,7 @@ type Route =
   | 'add-consumable'
   | 'requests'
   | 'request-details'
+  | 'add-external-request'
   | 'gate-pass'
   | 'gate-pass-details'
   | 'gate-verification'
@@ -86,6 +88,9 @@ function currentRoute(): { name: Route; assetId?: string; consumableId?: string;
       return { name: 'gate-pass' };
     }
     // Requests Routes
+    if (path === '/requests/new-external' || path === '/requests/new-external/') {
+      return { name: 'add-external-request' };
+    }
     if (path.startsWith('/requests/')) {
       const rest = path.slice('/requests/'.length);
       return { name: 'request-details', requestId: decodeURIComponent(rest) };
@@ -158,6 +163,7 @@ export default function App() {
       route !== 'add-consumable' &&
       route !== 'requests' &&
       route !== 'request-details' &&
+      route !== 'add-external-request' &&
       route !== 'gate-pass' &&
       route !== 'gate-pass-details' &&
       route !== 'gate-verification' &&
@@ -344,6 +350,16 @@ export default function App() {
   if (route === 'gate-pass' && getToken()) {
     return (
       <GatePassPage
+        onNavigate={handleSubRouteNav}
+        onSignOut={signOut}
+      />
+    );
+  }
+
+  // Add External Request Route
+  if (route === 'add-external-request' && getToken()) {
+    return (
+      <AddExternalRequestPage
         onNavigate={handleSubRouteNav}
         onSignOut={signOut}
       />

@@ -196,3 +196,127 @@
   font-weight: 700;
   font-size: 13.5px;
 }
+
+/* =====================================================================
+   Procurement & Approval Metadata Card Styles
+   ===================================================================== */
+
+@media (min-width: 900px) {
+  .amx-procurement-kv-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.amx-source-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  width: fit-content;
+}
+
+.amx-source-pill.external {
+  background-color: rgba(2, 132, 199, 0.12);
+  color: #0284c7;
+  border: 1px solid rgba(2, 132, 199, 0.28);
+}
+
+.amx-source-pill.internal {
+  background-color: rgba(5, 150, 105, 0.12);
+  color: #059669;
+  border: 1px solid rgba(5, 150, 105, 0.28);
+}
+
+.amx-text-muted {
+  color: var(--amx-dash-text-muted);
+  font-weight: 500;
+  font-style: italic;
+}
+
+.amx-attachments-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.amx-attachment-chip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background-color: var(--amx-dash-bg);
+  border: 1px solid var(--amx-dash-border-light);
+  border-radius: 6px;
+  padding: 8px 12px;
+  transition: all 0.15s ease;
+  max-width: 100%;
+}
+
+.amx-attachment-chip:hover {
+  border-color: var(--amx-dash-secondary);
+  background-color: #ffffff;
+}
+
+.amx-attachment-icon {
+  font-size: 22px;
+  color: var(--amx-dash-secondary);
+  flex-shrink: 0;
+}
+
+.amx-attachment-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.amx-attachment-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--amx-dash-text);
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.amx-attachment-size {
+  font-size: 11px;
+  color: var(--amx-dash-text-muted);
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.amx-attachment-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 8px;
+  border-left: 1px solid var(--amx-dash-border-light);
+  padding-left: 8px;
+}
+
+.amx-attachment-action-btn {
+  background: transparent;
+  border: 1px solid var(--amx-dash-border);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--amx-dash-text);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.amx-attachment-action-btn:hover {
+  background-color: var(--amx-dash-surface-low);
+  color: var(--amx-dash-secondary);
+  border-color: var(--amx-dash-secondary);
+}
+

@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { DashboardLayout } from '../layouts/DashboardLayout';
 import { listRequests, type RequestApiError } from '../api/requestApi';
+import { getStoredRequests } from '../data/requestsData';
 import './Requests.css';
 
 const REQUEST_FILTER_OPTIONS = {
@@ -109,11 +110,55 @@ export const RequestsPage: React.FC<RequestsPageProps> = ({
               history: [],
             }))
           : [];
-        setRequests(rows);
-        setTotal(Number(result.total ?? 0));
+        const stored = getStoredRequests();
+        const storedNew = stored
+          .filter((s) => !rows.some((r) => r.id === s.id))
+          .map((s) => ({
+            id: s.id,
+            requesterName: s.requesterName,
+            requesterEmail: s.requesterEmail,
+            department: s.department,
+            requestType: s.requestType,
+            requestedItem: s.requestedItem,
+            category: s.category,
+            quantity: s.quantity,
+            priority: s.priority,
+            requestDate: s.requestDate,
+            status: s.status,
+            justification: s.justification,
+            processingGuidelines: s.processingGuidelines,
+            history: s.history || [],
+          }));
+        const combined = [...storedNew, ...rows];
+        setRequests(combined);
+        setTotal(Number(result.total ?? 0) + storedNew.length);
       })
       .catch((error: unknown) => {
         if (!active) return;
+        const stored = getStoredRequests();
+        if (stored && stored.length > 0) {
+          setRequests(
+            stored.map((s) => ({
+              id: s.id,
+              requesterName: s.requesterName,
+              requesterEmail: s.requesterEmail,
+              department: s.department,
+              requestType: s.requestType,
+              requestedItem: s.requestedItem,
+              category: s.category,
+              quantity: s.quantity,
+              priority: s.priority,
+              requestDate: s.requestDate,
+              status: s.status,
+              justification: s.justification,
+              processingGuidelines: s.processingGuidelines,
+              history: s.history || [],
+            }))
+          );
+          setTotal(stored.length);
+          setApiError(null);
+          return;
+        }
         const status = (error as RequestApiError).status;
         setApiError(status === 401 ? 'Your session has expired. Please sign in again.' : status === 403 ? 'Admin access is required to view requests.' : status === 404 ? 'The selected request could not be found.' : status === 409 ? 'This request status change is not allowed.' : status === 422 ? 'The request filters or transition payload are invalid.' : status && status >= 500 ? 'The request service is temporarily unavailable.' : error instanceof Error ? error.message : 'Unable to load requests.');
         setRequests([]);
@@ -261,6 +306,18 @@ export const RequestsPage: React.FC<RequestsPageProps> = ({
             </p>
           </div>
           <div className="amx-requests-header-actions">
+            <button
+              type="button"
+              className="amx-btn-primary"
+              onClick={() => onNavigate?.('requests/new-external')}
+              id="add-external-request-btn"
+              aria-label="Add external request"
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: '18px' }} aria-hidden="true">
+                add
+              </span>
+              <span>Add External Request</span>
+            </button>
             <button
               type="button"
               className="amx-btn-secondary"
